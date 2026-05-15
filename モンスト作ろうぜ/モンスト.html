@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>モンスト風（PC版）</title>
+
+<style>
+body {
+    margin: 0;
+    overflow: hidden;
+    background: #111;
+    font-family: sans-serif;
+}
+
+canvas {
+    display: block;
+    background: #1e1e1e;
+}
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+//////////////////////////////////////////////////////
+// PCフルスクリーン
+//////////////////////////////////////////////////////
+function resize(){
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener("resize", resize);
+
+//////////////////////////////////////////////////////
+// Vector
+//////////////////////////////////////////////////////
+class Vector2 {
+    constructor(x,y){ this.x=x; this.y=y; }
+
+    add(v){ return new Vector2(this.x+v.x,this.y+v.y); }
+    sub(v){ return new Vector2(this.x-v.x,this.y-v.y); }
+    mul(s){ return new Vector2(this.x*s,this.y*s); }
+
+    length(){
+        return Math.sqrt(this.x*this.x + this.y*this.y);
+    }
+
+    normalize(){
+        const l=this.length();
+        return l===0 ? new Vector2(0,0) : new Vector2(this.x/l,this.y/l);
+    }
+}
+
+//////////////////////////////////////////////////////
+// 反射
+//////////////////////////////////////////////////////
+function reflect(vel, normal){
+    const dot = vel.x*normal.x + vel.y*normal.y;
+    return new Vector2(
+        vel.x - 2*dot*normal.x,
+        vel.y - 2*dot*normal.y
+    );
+}
+
+//////////////////////////////////////////////////////
+// Player
+//////////////////////////////////////////////////////
+class Ball {
+    constructor(x,y,size,color){
+        this.pos=new Vector2(x,y);
+        this.vel=new Vector2(0,0);
+        this.size=size;
+        this.color=color;
+        this.friction=0.985;
+    }
+
+    update(){
+        this.pos=this.pos.add(this.vel);
+        this.vel=this.vel.mul(this.friction);
+
+        if(this.vel.length()<0.05){
+            this.vel=new Vector2(0,0);
+        }
+
+        this.wall();
+    }
+
+    wall(){
+        const h=this.size/2;
+
+        if(this.pos.x-h<0){ this.pos.x=h; this.vel.x*=-1; }
+        if(this.pos.x+h>canvas.width){ this.pos.x=canvas.width-h; this.vel.x*=-1; }
+        if(this.pos.y-h<0){ this.pos.y=h; this.vel.y*=-1; }
+        if(this.pos.y+h>canvas.height){ this.pos.y=canvas.height-h; this.vel.y*=-1; }
+    }
+
+    draw(){
+        ctx.fillStyle=this.color;
+        ctx.fillRect(
+            this.pos.x-this.size/2,
+            this.pos.y-this.size/2,
+            this.size,
+            this.size
+        );
+    }
+}
+
+//////////////////////////////////////////////////////
+// Enemy
+//////////////////////////////////////////////////////
+class Enemy {
+    constructor(x,y,size){
+        this.pos=new Vector2(x,y);
+        this.size=size;
+        this.hp=5;
+        this.cool=false;
+    }
+
+    draw(){
+        ctx.fillStyle="#ff5555";
+        ctx.fillRect(
+            this.pos.x-this.size/2,
+            this.pos.y-this.size/2,
+            this.size,
+            this.size
+        );
+
+        ctx.fillStyle="white";
+        ctx.font="18px sans-serif";
+        ctx.fillText(this.hp,this.pos.x-5,this.pos.y+6);
+    }
+}
+
+//////////////////////////////////////////////////////
+// 初期配置
+//////////////////////////////////////////////////////
+const player = new Ball(canvas.width/2, canvas.height-120, 48, "#4da6ff");
+
+const enemies=[];
+for(let i=0;i<5;i++){
+    enemies.push(new Enemy(140+i*120,220,60));
+}
+
+//////////////////////////////////////////////////////
+// 入力
+//////////////////////////////////////////////////////
+let dragStart=null;
+let dragCurrent=null;
+let dragging=false;
+
+function getPos(e){
+    const rect=canvas.getBoundingClientRect();
+    return new Vector2(
+        e.clientX,
+        e.clientY
+    );
+}
+
+function start(e){
+    dragging=true;
+    dragStart=getPos(e);
+    dragCurrent=dragStart;
+}
+
+function move(e){
+    if(!dragging) return;
+    dragCurrent=getPos(e);
+}
+
+function end(){
+    if(!dragging || !dragStart || !dragCurrent) return;
+
+    const dir = dragStart.sub(dragCurrent).normalize();
+    player.vel = dir.mul(18);
+
+    dragging=false;
+    dragStart=null;
+    dragCurrent=null;
+}
+
+canvas.addEventListener("mousedown",start);
+canvas.addEventListener("mousemove",move);
+canvas.addEventListener("mouseup",end);
+
+//////////////////////////////////////////////////////
+// 衝突
+//////////////////////////////////////////////////////
+function hit(a,b){
+    const ah=a.size/2;
+    const bh=b.size/2;
+
+    return (
+        a.pos.x-ah < b.pos.x+bh &&
+        a.pos.x+ah > b.pos.x-bh &&
+        a.pos.y-ah < b.pos.y+bh &&
+        a.pos.y+ah > b.pos.y-bh
+    );
+}
+
+function normal(a,b){
+    const dx=a.pos.x-b.pos.x;
+    const dy=a.pos.y-b.pos.y;
+
+    const ox=(a.size/2+b.size/2)-Math.abs(dx);
+    const oy=(a.size/2+b.size/2)-Math.abs(dy);
+
+    if(ox<oy){
+        return new Vector2(dx>0?1:-1,0);
+    }
+    return new Vector2(0,dy>0?1:-1);
+}
+
+function collision(){
+    enemies.forEach((e,i)=>{
+        if(hit(player,e) && !e.cool){
+
+            e.hp--;
+
+            const n=normal(player,e);
+
+            player.pos=player.pos.add(n.mul(2));
+            player.vel=reflect(player.vel,n).mul(0.9);
+
+            e.cool=true;
+            setTimeout(()=>e.cool=false,200);
+
+            if(e.hp<=0){
+                enemies.splice(i,1);
+            }
+        }
+    });
+}
+
+//////////////////////////////////////////////////////
+// 矢印（PC版）
+//////////////////////////////////////////////////////
+function drawArrow(){
+    if(!dragging || !dragStart || !dragCurrent) return;
+
+    const dir = dragStart.sub(dragCurrent).normalize();
+
+    const len=100;
+
+    const start=player.pos;
+    const end=new Vector2(
+        start.x+dir.x*len,
+        start.y+dir.y*len
+    );
+
+    ctx.beginPath();
+    ctx.moveTo(start.x,start.y);
+    ctx.lineTo(end.x,end.y);
+    ctx.strokeStyle="rgba(255,255,255,0.8)";
+    ctx.lineWidth=4;
+    ctx.stroke();
+
+    const angle=Math.atan2(dir.y,dir.x);
+
+    ctx.beginPath();
+    ctx.moveTo(end.x,end.y);
+    ctx.lineTo(end.x-12*Math.cos(angle-0.5), end.y-12*Math.sin(angle-0.5));
+    ctx.lineTo(end.x-12*Math.cos(angle+0.5), end.y-12*Math.sin(angle+0.5));
+    ctx.closePath();
+    ctx.fillStyle="white";
+    ctx.fill();
+}
+
+//////////////////////////////////////////////////////
+// loop
+//////////////////////////////////////////////////////
+function loop(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    player.update();
+    collision();
+
+    player.draw();
+    enemies.forEach(e=>e.draw());
+
+    drawArrow();
+
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+
+</body>
+</html>
